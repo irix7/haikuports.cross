@@ -27,9 +27,9 @@ LICENSE="GNU GPL v3
 REVISION="1"
 # The haiku-mips branch of the irix7 fork: binutils 2.47 with the
 # mips-*-haiku target (big-endian, n32). haiku/buildtools has no such target.
-srcGitRev="dc99124f5b38115242e458f9ed078a0963cba502"
+srcGitRev="f4dcc0a04e6fda6db4e90eaf904df308d8c056a8"
 SOURCE_URI="https://github.com/irix7/binutils-gdb/archive/$srcGitRev.tar.gz"
-CHECKSUM_SHA256="2b657eb8a5d1196dcfff85aa3c6f60f8d36c2a64220294ab3e87b0519e226c3a"
+CHECKSUM_SHA256="e4ffdad30add0c408466b993152543aa34862f4b4061bc818a110dd29483bb60"
 SOURCE_DIR="binutils-gdb-$srcGitRev"
 
 ARCHITECTURES="mips"
