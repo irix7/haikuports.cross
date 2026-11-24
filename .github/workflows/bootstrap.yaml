@@ -7,7 +7,12 @@
 #              the matrix when it builds for mips.
 #   boot       builds the netboot image and boots it in the IRIS emulator up
 #              to the mounted boot volume
-#   publish    uploads the packages to the release "mips-packages"
+#
+# The packages are stored in the release "mips-packages" of this repository.
+# Each job uploads what it built as soon as it is built. A ports job whose
+# package is in the release already does nothing, so a run that was cancelled
+# or ran out of time continues where it stopped. A recipe change needs a new
+# REVISION to be built again; "rebuild" of a manual run builds everything.
 name: bootstrap
 on:
   push:
@@ -15,6 +20,11 @@ on:
   pull_request:
     branches: [ indy-mips ]
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Build every port, also those with a package in the release
+        type: boolean
+        default: false
 
 # A newer push replaces the run of an older one.
 concurrency:
@@ -29,6 +39,7 @@ env:
   MPFR_PREFIX: /usr
   MPC_PREFIX: /usr
   ISL_PREFIX: /usr
+  RELEASE: mips-packages
   HOST_PACKAGES: >-
     nasm autopoint bison flex texinfo gawk gperf m4 autoconf automake libtool
     cmake zip unzip mtools xorriso libgmp-dev libmpfr-dev libmpc-dev
@@ -38,6 +49,8 @@ jobs:
   toolchain:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    permissions:
+      contents: write
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
 
@@ -182,6 +195,20 @@ jobs:
         path: bootstrap-base.tar.gz
         retention-days: 7
 
+    - name: store the GCC and sysroot packages in the release
+      if: github.event_name != 'pull_request'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        gh release view "$RELEASE" >/dev/null 2>&1 \
+          || gh release create "$RELEASE" --prerelease \
+            --target "$GITHUB_SHA" --title "mips bootstrap packages" \
+            --notes "Packages of the bootstrap workflow for the mips port of Haiku (SGI Indy)."
+        gh release upload "$RELEASE" --clobber \
+          toolchain/build/syslibs/*.hpkg \
+          toolchain/bootstrap/objects/haiku/mips/packaging/packages/haiku_cross_devel_sysroot_stage1_mips.hpkg
+
     - name: show the end of the logs
       if: always()
       run: |
@@ -209,6 +236,12 @@ jobs:
     needs: toolchain
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PACKAGES: toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages
     strategy:
       fail-fast: false
       matrix:
@@ -217,7 +250,32 @@ jobs:
           - expat_bootstrap
 
     steps:
+    - name: checkout haikuports.cross
+      uses: actions/checkout@v4
+      with:
+        path: toolchain/ports/haikuports.cross
+
+    # The package name holds the version of the newest recipe and its
+    # REVISION. With that package in the release there is nothing to do.
+    - name: look for the package of ${{ matrix.port }} in the release
+      id: stored
+      run: |
+        port=${{ matrix.port }}
+        recipe=$(ls toolchain/ports/haikuports.cross/*/*/"$port"-*.recipe | sort -V | tail -1)
+        version=${recipe##*/"$port"-}
+        version=${version%.recipe}
+        revision=$(sed -n 's/^REVISION="\(.*\)"/\1/p' "$recipe")
+        gh release view "$RELEASE" --json assets -q '.assets[].name' > assets.txt 2>/dev/null || true
+        skip=false
+        if [ "${{ inputs.rebuild }}" != "true" ] \
+            && grep -q "^$port-$version-$revision-\(mips\|any\)\.hpkg$" assets.txt; then
+          skip=true
+        fi
+        echo "$port $version-$revision: stored=$skip"
+        echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
     - name: checkout haiku (irix7 fork, mips port)
+      if: steps.stored.outputs.skip != 'true'
       uses: actions/checkout@v4
       with:
         repository: irix7/haiku
@@ -225,23 +283,21 @@ jobs:
         path: haiku
 
     - name: checkout haikuporter (irix7 fork)
+      if: steps.stored.outputs.skip != 'true'
       uses: actions/checkout@v4
       with:
         repository: irix7/haikuporter
         ref: indy-mips
         path: toolchain/ports/haikuporter
 
-    - name: checkout haikuports.cross
-      uses: actions/checkout@v4
-      with:
-        path: toolchain/ports/haikuports.cross
-
     - name: install ubuntu packages
+      if: steps.stored.outputs.skip != 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y $HOST_PACKAGES
 
     - name: restore the toolchain
+      if: steps.stored.outputs.skip != 'true'
       uses: actions/cache/restore@v4
       with:
         path: |
@@ -253,24 +309,52 @@ jobs:
         fail-on-cache-miss: true
 
     - name: download the bootstrap build
+      if: steps.stored.outputs.skip != 'true'
       uses: actions/download-artifact@v4
       with:
         name: bootstrap-base
 
     - name: unpack the bootstrap build
+      if: steps.stored.outputs.skip != 'true'
       run: |
         mkdir -p toolchain/bootstrap
         tar -C toolchain/bootstrap -xzf bootstrap-base.tar.gz
 
+    # Packages that are built already serve as dependencies.
+    - name: download the stored packages
+      if: steps.stored.outputs.skip != 'true'
+      run: |
+        mkdir -p "$PACKAGES"
+        gh release download "$RELEASE" --pattern '*.hpkg' --dir stored || true
+        rm -f stored/haiku_cross_devel_sysroot_*.hpkg stored/gcc_*.hpkg
+        if [ "${{ inputs.rebuild }}" = "true" ]; then
+          rm -f stored/${{ matrix.port }}-*.hpkg
+        fi
+        cp -n stored/*.hpkg "$PACKAGES/" 2>/dev/null || true
+        ls "$PACKAGES" | sort > before.txt
+
     - name: build ${{ matrix.port }}
+      if: steps.stored.outputs.skip != 'true'
       run: haiku/indy/toolchain/port.sh ${{ matrix.port }} > port.log 2>&1
 
+    # Also after a failed build: the dependencies it built are kept.
+    - name: store the new packages in the release
+      if: always() && steps.stored.outputs.skip != 'true' && github.event_name != 'pull_request'
+      run: |
+        [ -f before.txt ] || exit 0
+        ls "$PACKAGES" | sort > after.txt
+        new=$(comm -13 before.txt after.txt | grep -v -- '-source\.hpkg$' || true)
+        echo "new packages: $new"
+        for package in $new; do
+          gh release upload "$RELEASE" --clobber "$PACKAGES/$package"
+        done
+
     - name: show the end of the log
-      if: always()
+      if: always() && steps.stored.outputs.skip != 'true'
       run: tail -150 port.log || true
 
     - name: upload the packages and the log
-      if: always()
+      if: always() && steps.stored.outputs.skip != 'true'
       uses: actions/upload-artifact@v4
       with:
         name: port-${{ matrix.port }}
@@ -367,36 +451,3 @@ jobs:
           ${{ runner.temp }}/gate/iris.out
           haiku/generated.mips/jam.log
 
-  # Stores the packages in the release "mips-packages" of this repository.
-  # A package of a port whose job failed is not uploaded, so the release
-  # keeps the last one that built.
-  publish:
-    needs: [toolchain, ports]
-    if: always() && needs.toolchain.result == 'success' && github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-
-    steps:
-    - name: download the packages
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-
-    - name: collect the packages
-      run: |
-        mkdir packages
-        tar -C artifacts/bootstrap-base -xzf artifacts/bootstrap-base/bootstrap-base.tar.gz
-        find artifacts -name '*.hpkg' -exec cp -f {} packages/ \;
-        ls -l packages
-
-    - name: upload to the release mips-packages
-      env:
-        GH_TOKEN: ${{ github.token }}
-        GH_REPO: ${{ github.repository }}
-      run: |
-        gh release view mips-packages >/dev/null 2>&1 \
-          || gh release create mips-packages --prerelease \
-            --target "$GITHUB_SHA" --title "mips bootstrap packages" \
-            --notes "Packages of the bootstrap workflow for the mips port of Haiku (SGI Indy). Each run replaces the packages it built."
-        gh release upload mips-packages packages/*.hpkg --clobber
