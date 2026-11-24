@@ -1,8 +1,13 @@
 # Bootstrap build for the mips port of Haiku (SGI Indy), the only
-# architecture of this fork. It builds the cross toolchain from the irix7
-# forks of binutils and GCC, the stage 1 cross sysroot of irix7/haiku, and
-# then the ports of PORT_LIST with haikuporter. Add a port to PORT_LIST when it
-# builds for mips.
+# architecture of this fork.
+#
+#   toolchain  builds the cross toolchain from the irix7 forks of binutils
+#              and GCC (cached), and the stage 1 cross sysroot of irix7/haiku
+#   ports      one job per port: haikuporter cross-builds it. Add a port to
+#              the matrix when it builds for mips.
+#   boot       builds the netboot image and boots it in the IRIS emulator up
+#              to the mounted boot volume
+#   publish    uploads the packages to the release "mips-packages"
 name: bootstrap
 on:
   push:
@@ -11,8 +16,12 @@ on:
     branches: [ indy-mips ]
   workflow_dispatch:
 
+# A newer push replaces the run of an older one.
+concurrency:
+  group: bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  PORT_LIST: zlib_bootstrap expat_bootstrap
   HAIKU_TOOLCHAIN: ${{ github.workspace }}/toolchain
   HAIKU_MIPS_SEED_DIR: ${{ github.workspace }}/toolchain/seed
   CROSS_PREFIX: ${{ github.workspace }}/toolchain/cross-tools-mips/bin/mips-unknown-haiku-
@@ -20,11 +29,17 @@ env:
   MPFR_PREFIX: /usr
   MPC_PREFIX: /usr
   ISL_PREFIX: /usr
+  HOST_PACKAGES: >-
+    nasm autopoint bison flex texinfo gawk gperf m4 autoconf automake libtool
+    cmake zip unzip mtools xorriso libgmp-dev libmpfr-dev libmpc-dev
+    libisl-dev zlib1g-dev libzstd-dev
 
 jobs:
-  bootstrap:
+  toolchain:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
 
     steps:
     - name: checkout haiku (irix7 fork, mips port)
@@ -75,9 +90,7 @@ jobs:
     - name: install ubuntu packages
       run: |
         sudo apt-get update
-        sudo apt-get install -y nasm autopoint bison flex texinfo gawk gperf \
-          m4 autoconf automake libtool cmake zip unzip mtools xorriso \
-          libgmp-dev libmpfr-dev libmpc-dev libisl-dev zlib1g-dev libzstd-dev
+        sudo apt-get install -y $HOST_PACKAGES
 
     - name: install jam
       working-directory: buildtools/jam
@@ -151,14 +164,29 @@ jobs:
           '<repository-config-HaikuPortsCross>haikuports.conf' \
           haiku_cross_devel_sysroot_stage1_mips.hpkg
 
-    - name: build the ports
-      run: haiku/indy/toolchain/port.sh $PORT_LIST > ports.log 2>&1
+    # What a ports job needs of the bootstrap build: the host tools, the MIME
+    # database, the sysroot package and haikuporter's configuration. The
+    # paths in haikuports.conf are absolute and equal on every runner.
+    - name: pack the bootstrap build for the ports jobs
+      run: |
+        repository=objects/haiku/mips/packaging/repositories/HaikuPortsCross-build
+        tar -C toolchain/bootstrap -czf bootstrap-base.tar.gz \
+          objects/linux objects/common \
+          objects/haiku/mips/packaging/packages/haiku_cross_devel_sysroot_stage1_mips.hpkg \
+          $repository/haikuports.conf $repository/packages
+
+    - name: upload the bootstrap build
+      uses: actions/upload-artifact@v4
+      with:
+        name: bootstrap-base
+        path: bootstrap-base.tar.gz
+        retention-days: 7
 
     - name: show the end of the logs
       if: always()
       run: |
         for log in toolchain-build.log syslibs.log haiku/generated.mips/jam.log \
-            toolchain/bootstrap/jam.log ports.log; do
+            toolchain/bootstrap/jam.log; do
           if [ -f $log ]; then
             echo "::group::$log"
             tail -150 $log
@@ -166,16 +194,209 @@ jobs:
           fi
         done
 
-    - name: upload the packages and logs
+    - name: upload the logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: mips-bootstrap
+        name: toolchain-logs
         if-no-files-found: ignore
         path: |
-          toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages/*.hpkg
-          toolchain/bootstrap/objects/haiku/mips/packaging/packages/*.hpkg
-          toolchain/build/syslibs/*.hpkg
           *.log
           toolchain/bootstrap/jam.log
           haiku/generated.mips/jam.log
+
+  ports:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        port:
+          - zlib_bootstrap
+          - expat_bootstrap
+
+    steps:
+    - name: checkout haiku (irix7 fork, mips port)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/haiku
+        ref: indy-mips
+        path: haiku
+
+    - name: checkout haikuporter (irix7 fork)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/haikuporter
+        ref: indy-mips
+        path: toolchain/ports/haikuporter
+
+    - name: checkout haikuports.cross
+      uses: actions/checkout@v4
+      with:
+        path: toolchain/ports/haikuports.cross
+
+    - name: install ubuntu packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $HOST_PACKAGES
+
+    - name: restore the toolchain
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          toolchain/cross-tools-mips
+          toolchain/seed
+          toolchain/build/kernel-libs
+          toolchain/build/syslibs/*.hpkg
+        key: ${{ needs.toolchain.outputs.cache-key }}
+        fail-on-cache-miss: true
+
+    - name: download the bootstrap build
+      uses: actions/download-artifact@v4
+      with:
+        name: bootstrap-base
+
+    - name: unpack the bootstrap build
+      run: |
+        mkdir -p toolchain/bootstrap
+        tar -C toolchain/bootstrap -xzf bootstrap-base.tar.gz
+
+    - name: build ${{ matrix.port }}
+      run: haiku/indy/toolchain/port.sh ${{ matrix.port }} > port.log 2>&1
+
+    - name: show the end of the log
+      if: always()
+      run: tail -150 port.log || true
+
+    - name: upload the packages and the log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: port-${{ matrix.port }}
+        if-no-files-found: ignore
+        path: |
+          toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages/*.hpkg
+          port.log
+
+  boot:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+    - name: checkout haiku (irix7 fork, mips port)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/haiku
+        ref: indy-mips
+        path: haiku
+
+    - name: checkout buildtools (for jam)
+      uses: actions/checkout@v4
+      with:
+        repository: haiku/buildtools
+        path: buildtools
+
+    - name: install ubuntu packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $HOST_PACKAGES
+
+    - name: install jam
+      working-directory: buildtools/jam
+      run: |
+        make
+        sudo ./jam0 install
+
+    - name: restore the toolchain
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          toolchain/cross-tools-mips
+          toolchain/seed
+          toolchain/build/kernel-libs
+          toolchain/build/syslibs/*.hpkg
+        key: ${{ needs.toolchain.outputs.cache-key }}
+        fail-on-cache-miss: true
+
+    - name: configure the regular build
+      run: |
+        mkdir -p haiku/generated.mips
+        cd haiku/generated.mips
+        ../configure --cross-tools-prefix "$CROSS_PREFIX"
+
+    - name: build the netboot image and bfs_shell
+      run: haiku/indy/jam.sh haiku-netboot-indy '<build>bfs_shell'
+
+    - name: create an empty BFS volume
+      working-directory: haiku/generated.mips
+      run: |
+        truncate -s 64M disk.raw
+        LD_LIBRARY_PATH=$(dirname $(find objects/linux -name libroot_build.so | head -1)) \
+          objects/linux/x86_64/release/tools/bfs_shell/bfs_shell \
+          --initialize disk.raw Haiku
+
+    - name: install IRIS
+      id: iris
+      uses: irix7/iris/.github/actions/setup-iris@main
+
+    - name: boot in IRIS up to the mounted boot volume
+      env:
+        IRIS: ${{ steps.iris.outputs.iris }}
+        IRIS_CI: ${{ steps.iris.outputs.iris-ci }}
+        WORK: ${{ runner.temp }}/gate
+        DISK: haiku/generated.mips/disk.raw
+        BOOT_ARGS: disk
+      run: |
+        haiku/indy/gate.sh haiku/generated.mips/haiku-indy-netboot \
+          "Mounted boot partition" 300
+
+    - name: show the end of the build log
+      if: failure()
+      run: tail -150 haiku/generated.mips/jam.log || true
+
+    - name: upload the serial log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: boot
+        if-no-files-found: ignore
+        path: |
+          ${{ runner.temp }}/gate/serial.log
+          ${{ runner.temp }}/gate/iris.out
+          haiku/generated.mips/jam.log
+
+  # Stores the packages in the release "mips-packages" of this repository.
+  # A package of a port whose job failed is not uploaded, so the release
+  # keeps the last one that built.
+  publish:
+    needs: [toolchain, ports]
+    if: always() && needs.toolchain.result == 'success' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+    - name: download the packages
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: collect the packages
+      run: |
+        mkdir packages
+        tar -C artifacts/bootstrap-base -xzf artifacts/bootstrap-base/bootstrap-base.tar.gz
+        find artifacts -name '*.hpkg' -exec cp -f {} packages/ \;
+        ls -l packages
+
+    - name: upload to the release mips-packages
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        gh release view mips-packages >/dev/null 2>&1 \
+          || gh release create mips-packages --prerelease \
+            --target "$GITHUB_SHA" --title "mips bootstrap packages" \
+            --notes "Packages of the bootstrap workflow for the mips port of Haiku (SGI Indy). Each run replaces the packages it built."
+        gh release upload mips-packages packages/*.hpkg --clobber
