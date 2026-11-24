@@ -1,0 +1,42 @@
+From f660badacf771048615b12c7c8e6626a3fcd56a2 Mon Sep 17 00:00:00 2001
+From: belikh <io@belic.net>
+Date: Tue, 24 Nov 2026 10:06:23 +1000
+Subject: [PATCH] Add mips-*-haiku
+
+Haiku on mips is n32 with a 64-bit long double, so it shares the
+stanza of IRIX. It has no sgidefs.h: the compiler defines _MIPS_SIM and
+the _ABI macros.
+---
+ configure.host       | 2 +-
+ src/mips/ffitarget.h | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/configure.host b/configure.host
+index 4cc69be..2f43224 100644
+--- a/configure.host
++++ b/configure.host
+@@ -176,7 +176,7 @@ case "${host}" in
+ 	SOURCES="ffi.c sysv.S"
+ 	;;
+ 
+-  mips-sgi-irix5.* | mips-sgi-irix6.* | mips*-*-rtems*)
++  mips-sgi-irix5.* | mips-sgi-irix6.* | mips*-*-rtems* | mips*-*-haiku*)
+ 	TARGET=MIPS; TARGETDIR=mips
+ 	;;
+   mips*-*linux* | mips*-*-openbsd* | mips*-*-freebsd*)
+diff --git a/src/mips/ffitarget.h b/src/mips/ffitarget.h
+index 294c3ba..49d7f91 100644
+--- a/src/mips/ffitarget.h
++++ b/src/mips/ffitarget.h
+@@ -41,7 +41,7 @@
+ #define _MIPS_SIM_ABI32		1
+ #define _MIPS_SIM_NABI32	2
+ #define _MIPS_SIM_ABI64		3
+-#elif !defined(__OpenBSD__) && !defined(__FreeBSD__)
++#elif !defined(__OpenBSD__) && !defined(__FreeBSD__) && !defined(__HAIKU__)
+ # include <sgidefs.h>
+ #endif
+ 
+-- 
+2.56.0
+
