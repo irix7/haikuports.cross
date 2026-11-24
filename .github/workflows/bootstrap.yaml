@@ -26,10 +26,11 @@ on:
         type: boolean
         default: false
 
-# A newer push replaces the run of an older one.
+# One run at a time. A newer run waits: cancelling would throw away an
+# hour of toolchain build before it is cached.
 concurrency:
   group: bootstrap-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   HAIKU_TOOLCHAIN: ${{ github.workspace }}/toolchain
