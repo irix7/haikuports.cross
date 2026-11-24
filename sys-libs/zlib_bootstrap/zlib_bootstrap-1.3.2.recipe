@@ -9,7 +9,7 @@ SOURCE_URI="
 	"
 CHECKSUM_SHA256="bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
 REVISION="1"
-ARCHITECTURES="x86_gcc2 x86 x86_64 arm arm64 ppc m68k riscv64 sparc"
+ARCHITECTURES="x86_gcc2 x86 x86_64 arm arm64 ppc m68k mips riscv64 sparc"
 SECONDARY_ARCHITECTURES="x86"
 PATCHES="zlib-$portVersion.patchset"
 
