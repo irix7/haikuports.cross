@@ -3,8 +3,7 @@
 #
 #   toolchain  builds the cross toolchain from the irix7 forks of binutils
 #              and GCC (cached), and the stage 1 cross sysroot of irix7/haiku
-#   ports      one job per port: haikuporter cross-builds it. Add a port to
-#              the matrix when it builds for mips.
+#   ports      one job per port: haikuporter cross-builds it
 #   boot       builds the netboot image and boots it in the IRIS emulator up
 #              to the mounted boot volume
 #
@@ -263,9 +262,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The packages of build/jam/repositories/HaikuPortsCross/mips in
+        # irix7/haiku, without the GCC packages of the toolchain job.
         port:
+          - ca_root_certificates
+          - haikuporter
+          - noto
           - zlib_bootstrap
           - expat_bootstrap
+          - libffi_bootstrap
+          - ncurses6_bootstrap
+          - m4_bootstrap
+          - make_bootstrap
+          - sed_bootstrap
+          - grep_bootstrap
+          - less_bootstrap
+          - gawk_bootstrap
+          - findutils_bootstrap
+          - coreutils_bootstrap
+          - flex_bootstrap
+          - bison_bootstrap
+          - bash_bootstrap
+          - texinfo_bootstrap
+          - freetype_bootstrap
+          - curl_bootstrap
+          - icu74_bootstrap
+          - python3.10_bootstrap
+          - binutils_bootstrap
 
     steps:
     - name: checkout haikuports.cross
