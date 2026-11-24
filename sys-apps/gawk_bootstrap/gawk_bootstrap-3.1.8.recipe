@@ -46,11 +46,11 @@ SOURCE_DIR="gawk-$portVersion"
 BUILD()
 {
 	# gawk 3.1.8 is not C23 code, the default of GCC 15 and later.
+	export CC="${targetMachineTriple}-gcc -std=gnu17"
 	libtoolize --force --copy --install
 	runConfigure ./configure \
 		--build=$buildMachineTriple --host=$targetMachineTriple \
-		--disable-nls --disable-dependency-tracking \
-		CC="${targetMachineTriple}-gcc -std=gnu17"
+		--disable-nls --disable-dependency-tracking
 	make
 }
 

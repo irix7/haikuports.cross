@@ -47,11 +47,11 @@ SOURCE_DIR="m4-$portVersion"
 BUILD()
 {
 	# The bundled gnulib is not C23 code, the default of GCC 15 and later.
+	export CC="${targetMachineTriple}-gcc -std=gnu17"
 	runConfigure ./configure \
 		--build=$buildMachineTriple --host=$targetMachineTriple \
 		--disable-rpath --with-gnu-ld \
-		--enable-changeword \
-		CC="${targetMachineTriple}-gcc -std=gnu17"
+		--enable-changeword
 	make $jobArgs AR=${targetMachineTriple}-ar
 }
 

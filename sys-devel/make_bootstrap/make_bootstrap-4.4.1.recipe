@@ -39,11 +39,11 @@ BUILD_PREREQUIRES="
 BUILD()
 {
 	# The bundled gnulib is not C23 code, the default of GCC 15 and later.
+	export CC="${targetMachineTriple}-gcc -std=gnu17"
 	runConfigure ./configure \
 		--build=$buildMachineTriple --host=$targetMachineTriple \
 		--disable-rpath --with-gnu-ld --disable-dependency-tracking \
-		--without-guile \
-		CC="${targetMachineTriple}-gcc -std=gnu17"
+		--without-guile
 	./build.sh
 }
 
