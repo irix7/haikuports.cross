@@ -111,9 +111,11 @@ jobs:
         make
         sudo ./jam0 install
 
+    # Only what the toolchain is built from: a change to port.sh must not
+    # rebuild GCC.
     - name: generate cache key, based on the toolchain sources and scripts
       id: cache-key
-      run: echo "key=${{ runner.os }}-mips-toolchain-$(git -C toolchain/src/gcc rev-parse HEAD)-$(git -C toolchain/src/binutils rev-parse HEAD)-${{ hashFiles('haiku/indy/toolchain/**') }}" >> "$GITHUB_OUTPUT"
+      run: echo "key=${{ runner.os }}-mips-toolchain-$(git -C toolchain/src/gcc rev-parse HEAD)-$(git -C toolchain/src/binutils rev-parse HEAD)-${{ hashFiles('haiku/indy/toolchain/build.sh', 'haiku/indy/toolchain/seed.sh', 'haiku/indy/toolchain/syslibs.sh', 'haiku/indy/toolchain/patches/**') }}" >> "$GITHUB_OUTPUT"
 
     - name: Cache toolchain (${{ steps.cache-key.outputs.key }})
       id: cache-toolchain
