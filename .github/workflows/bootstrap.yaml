@@ -1,85 +1,181 @@
+# Bootstrap build for the mips port of Haiku (SGI Indy), the only
+# architecture of this fork. It builds the cross toolchain from the irix7
+# forks of binutils and GCC, the stage 1 cross sysroot of irix7/haiku, and
+# then the ports of PORT_LIST with haikuporter. Add a port to PORT_LIST when it
+# builds for mips.
 name: bootstrap
 on:
   push:
-    branches: [ master ]
+    branches: [ indy-mips ]
   pull_request:
-    branches: [ master ]
+    branches: [ indy-mips ]
+  workflow_dispatch:
+
+env:
+  PORT_LIST: zlib_bootstrap expat_bootstrap
+  HAIKU_TOOLCHAIN: ${{ github.workspace }}/toolchain
+  HAIKU_MIPS_SEED_DIR: ${{ github.workspace }}/toolchain/seed
+  CROSS_PREFIX: ${{ github.workspace }}/toolchain/cross-tools-mips/bin/mips-unknown-haiku-
+  GMP_PREFIX: /usr
+  MPFR_PREFIX: /usr
+  MPC_PREFIX: /usr
+  ISL_PREFIX: /usr
+
 jobs:
   bootstrap:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [arm, arm64, riscv64, x86_64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
 
     steps:
-    - name: checkout haiku (from github due to performance)
-      uses: actions/checkout@v3
+    - name: checkout haiku (irix7 fork, mips port)
+      uses: actions/checkout@v4
       with:
-        repository: haiku/haiku
+        repository: irix7/haiku
+        ref: indy-mips
         path: haiku
 
-    - name: tag current commit from haiku
-      working-directory: haiku
-      run: git tag $(git ls-remote https://review.haiku-os.org/haiku refs/tags/hrev* | awk '/'$(git rev-parse HEAD)'/ { gsub(/refs\/tags\//, ""); print $2 }') 
-
-    - name: checkout buildtools (from github due to performance)
-      uses: actions/checkout@v3
+    - name: checkout buildtools (for jam)
+      uses: actions/checkout@v4
       with:
         repository: haiku/buildtools
         path: buildtools
 
-    - name: checkout haikuporter
-      uses: actions/checkout@v3
+    - name: checkout haikuporter (irix7 fork)
+      uses: actions/checkout@v4
       with:
-        repository: haikuports/haikuporter
-        path: haikuporter
+        repository: irix7/haikuporter
+        ref: indy-mips
+        path: toolchain/ports/haikuporter
 
     - name: checkout haikuports
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: haikuports/haikuports
-        path: haikuports
+        path: toolchain/ports/haikuports
 
     - name: checkout haikuports.cross
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
-        path: haikuports.cross
+        path: toolchain/ports/haikuports.cross
 
-    - name: create build directory
-      run: mkdir build
+    - name: checkout binutils (irix7 fork)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/binutils-gdb
+        ref: haiku-mips
+        path: toolchain/src/binutils
+
+    - name: checkout gcc (irix7 fork)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/gcc
+        ref: haiku-mips
+        path: toolchain/src/gcc
 
     - name: install ubuntu packages
-      run: sudo apt install -y nasm autopoint
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y nasm autopoint bison flex texinfo gawk gperf \
+          m4 autoconf automake libtool cmake zip unzip mtools xorriso \
+          libgmp-dev libmpfr-dev libmpc-dev libisl-dev zlib1g-dev libzstd-dev
 
     - name: install jam
       working-directory: buildtools/jam
       run: |
         make
-        ./jam0 install
+        sudo ./jam0 install
 
-    - name: generate cache key, based on host, target, haiku and buildtools
+    - name: generate cache key, based on the toolchain sources and scripts
       id: cache-key
-      run: echo "key=${{ runner.os }}-${{ matrix.target }}-$(git -C haiku rev-parse HEAD)-$(git -C buildtools rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      run: echo "key=${{ runner.os }}-mips-toolchain-$(git -C toolchain/src/gcc rev-parse HEAD)-$(git -C toolchain/src/binutils rev-parse HEAD)-${{ hashFiles('haiku/indy/toolchain/**') }}" >> "$GITHUB_OUTPUT"
 
-    - name: Cache build (${{ steps.cache-key.outputs.key }})
-      id: cache-build
-      uses: actions/cache/restore@v3
+    - name: Cache toolchain (${{ steps.cache-key.outputs.key }})
+      id: cache-toolchain
+      uses: actions/cache/restore@v4
       with:
-        path: build
+        path: |
+          toolchain/cross-tools-mips
+          toolchain/seed
+          toolchain/build/kernel-libs
+          toolchain/build/syslibs/*.hpkg
         key: ${{ steps.cache-key.outputs.key }}
 
-    - name: configure for ${{ matrix.target }}
-      working-directory: build
-      run: ../haiku/configure --build-cross-tools ${{ matrix.target }} --cross-tools-source ../buildtools --bootstrap ../haikuporter/haikuporter ../haikuports.cross ../haikuports -j$(nproc)
+    - name: build binutils, GCC and the kernel libraries
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
+      run: |
+        (cd toolchain/src/gcc && ./contrib/gcc_update --touch) || true
+        haiku/indy/toolchain/build.sh all > toolchain-build.log 2>&1
 
-    - name: jam @bootstrap-raw for ${{ matrix.target }}
-      working-directory: build
-      run: jam -q @bootstrap-raw
+    - name: fill the seed directory
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
+      run: haiku/indy/toolchain/seed.sh
 
-    - name: save build files in cache (${{ steps.cache-key.outputs.key }})
-      uses: actions/cache/save@v3
+    - name: configure the regular build
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p haiku/generated.mips
+        cd haiku/generated.mips
+        ../configure --cross-tools-prefix "$CROSS_PREFIX"
+
+    - name: build and package the shared GCC libraries
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
+      run: haiku/indy/toolchain/syslibs.sh "$PWD/haiku/generated.mips" > syslibs.log 2>&1
+
+    - name: save the toolchain in cache (${{ steps.cache-key.outputs.key }})
+      if: steps.cache-toolchain.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          toolchain/cross-tools-mips
+          toolchain/seed
+          toolchain/build/kernel-libs
+          toolchain/build/syslibs/*.hpkg
+        key: ${{ steps.cache-key.outputs.key }}
+
+    - name: configure the bootstrap build
+      run: |
+        mkdir -p toolchain/bootstrap
+        cd toolchain/bootstrap
+        ../../haiku/configure --cross-tools-prefix "$CROSS_PREFIX" \
+          --bootstrap ../ports/haikuporter/haikuporter \
+          ../ports/haikuports.cross ../ports/haikuports
+        packages=objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages
+        mkdir -p $packages
+        cp ../build/syslibs/gcc_bootstrap_*.hpkg $packages/
+
+    - name: build the stage 1 cross sysroot
+      env:
+        OUTPUT: ${{ github.workspace }}/toolchain/bootstrap
+      run: |
+        haiku/indy/jam.sh @bootstrap-raw build \
+          '<repository-config-HaikuPortsCross>haikuports.conf' \
+          haiku_cross_devel_sysroot_stage1_mips.hpkg
+
+    - name: build the ports
+      run: haiku/indy/toolchain/port.sh $PORT_LIST > ports.log 2>&1
+
+    - name: show the end of the logs
       if: always()
+      run: |
+        for log in toolchain-build.log syslibs.log haiku/generated.mips/jam.log \
+            toolchain/bootstrap/jam.log ports.log; do
+          if [ -f $log ]; then
+            echo "::group::$log"
+            tail -150 $log
+            echo "::endgroup::"
+          fi
+        done
+
+    - name: upload the packages and logs
+      if: always()
+      uses: actions/upload-artifact@v4
       with:
-        path: build
-        key: ${{ steps.cache-key.outputs.key }}
+        name: mips-bootstrap
+        if-no-files-found: ignore
+        path: |
+          toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages/*.hpkg
+          toolchain/bootstrap/objects/haiku/mips/packaging/packages/*.hpkg
+          toolchain/build/syslibs/*.hpkg
+          *.log
+          toolchain/bootstrap/jam.log
+          haiku/generated.mips/jam.log
