@@ -384,8 +384,25 @@ jobs:
         ls "$PACKAGES" | sort > after.txt
         new=$(comm -13 before.txt after.txt | grep -v -- '-source\.hpkg$' || true)
         echo "new packages: $new"
+        # Two jobs can build the same package: one as its port, one as a
+        # dependency. The first upload wins. Replacing the asset (--clobber)
+        # from both at once fails with HTTP 404 and can lose the asset.
+        stored() {
+          gh release view "$RELEASE" --json assets -q '.assets[].name' | grep -qx "$1"
+        }
         for package in $new; do
-          gh release upload "$RELEASE" --clobber "$PACKAGES/$package"
+          case "$package" in
+            ${{ matrix.port }}-*|${{ matrix.port }}_*)
+              if [ "${{ inputs.rebuild }}" = "true" ]; then
+                gh release upload "$RELEASE" --clobber "$PACKAGES/$package"
+                continue
+              fi
+              ;;
+          esac
+          stored "$package" && continue
+          gh release upload "$RELEASE" "$PACKAGES/$package" \
+            || { sleep 20; stored "$package"; } \
+            || gh release upload "$RELEASE" "$PACKAGES/$package"
         done
 
     # errors.txt is what indy/ci-failures.sh of irix7/haiku prints.
