@@ -221,6 +221,20 @@ jobs:
           fi
         done
 
+    - name: write errors.txt
+      if: failure()
+      run: |
+        for log in toolchain-build.log syslibs.log haiku/generated.mips/jam.log \
+            toolchain/bootstrap/jam.log; do
+          if [ -f $log ]; then
+            echo "== $log"
+            grep -n -m 12 -B3 'error:\| Error [0-9]\|\*\*\* \|undefined reference\|\.\.\.failed' $log | cut -c1-300
+            echo "-- end of $log"
+            tail -30 $log | cut -c1-300
+          fi
+        done > errors.txt
+        { echo '```'; cat errors.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
     - name: upload the logs
       if: always()
       uses: actions/upload-artifact@v4
@@ -228,6 +242,7 @@ jobs:
         name: toolchain-logs
         if-no-files-found: ignore
         path: |
+          errors.txt
           *.log
           toolchain/bootstrap/jam.log
           haiku/generated.mips/jam.log
@@ -349,18 +364,22 @@ jobs:
           gh release upload "$RELEASE" --clobber "$PACKAGES/$package"
         done
 
-    - name: show the end of the log
-      if: always() && steps.stored.outputs.skip != 'true'
-      run: tail -150 port.log || true
+    # errors.txt is what indy/ci-failures.sh of irix7/haiku prints.
+    - name: write errors.txt
+      if: failure()
+      run: |
+        haiku/indy/toolchain/port-errors.sh port.log > errors.txt || true
+        { echo '```'; cat errors.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        cat errors.txt
 
-    - name: upload the packages and the log
+    - name: upload the log
       if: always() && steps.stored.outputs.skip != 'true'
       uses: actions/upload-artifact@v4
       with:
         name: port-${{ matrix.port }}
         if-no-files-found: ignore
         path: |
-          toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages/*.hpkg
+          errors.txt
           port.log
 
   boot:
@@ -436,18 +455,41 @@ jobs:
         haiku/indy/gate.sh haiku/generated.mips/haiku-indy-netboot \
           "Mounted boot partition" 300
 
-    - name: show the end of the build log
+    - name: write errors.txt
       if: failure()
-      run: tail -150 haiku/generated.mips/jam.log || true
+      run: |
+        mkdir -p boot-logs
+        cp "$RUNNER_TEMP"/gate/serial.log "$RUNNER_TEMP"/gate/iris.out boot-logs/ 2>/dev/null || true
+        {
+          if [ -f haiku/generated.mips/jam.log ]; then
+            echo "== jam.log"
+            grep -n -m 12 -B3 'error:\|undefined reference\|\.\.\.failed' haiku/generated.mips/jam.log | cut -c1-300
+            tail -5 haiku/generated.mips/jam.log | cut -c1-300
+          fi
+          if [ -f boot-logs/serial.log ]; then
+            echo "== end of the serial console"
+            tail -60 boot-logs/serial.log | cut -c1-300
+          fi
+          if [ -f boot-logs/iris.out ]; then
+            echo "== end of the emulator output"
+            tail -20 boot-logs/iris.out | cut -c1-300
+          fi
+        } > errors.txt
+        { echo '```'; cat errors.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-    - name: upload the serial log
+    - name: collect the logs
+      if: always()
+      run: |
+        mkdir -p boot-logs
+        cp "$RUNNER_TEMP"/gate/serial.log "$RUNNER_TEMP"/gate/iris.out boot-logs/ 2>/dev/null || true
+        cp haiku/generated.mips/jam.log boot-logs/ 2>/dev/null || true
+
+    - name: upload the logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: boot
         if-no-files-found: ignore
         path: |
-          ${{ runner.temp }}/gate/serial.log
-          ${{ runner.temp }}/gate/iris.out
-          haiku/generated.mips/jam.log
-
+          errors.txt
+          boot-logs
