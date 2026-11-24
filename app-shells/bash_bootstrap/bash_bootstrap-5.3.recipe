@@ -43,6 +43,12 @@ BUILD_PREREQUIRES="
 
 BUILD()
 {
+	# Without HAVE_NETWORK (the socket functions are not in libroot),
+	# netopen.c calls internal_error() and _() with no header included.
+	# GCC 14 and later reject the implicit declarations.
+	sed -i -e 's|^#else /\* !HAVE_NETWORK \*/$|&\n#include <stdio.h>\n#include <bashansi.h>\n#include <bashintl.h>\n#include <shell.h>|' \
+		lib/sh/netopen.c
+
 	runConfigure ./configure \
 		--without-bash-malloc --build=$buildMachineTriple --host=$targetMachineTriple
 	# plural needs a later timestamp per http://savannah.gnu.org/support/?109469
