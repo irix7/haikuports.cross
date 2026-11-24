@@ -2,7 +2,7 @@
 # architecture of this fork.
 #
 #   toolchain  builds the cross toolchain from the irix7 forks of binutils
-#              and GCC (cached), and the stage 1 cross sysroot of irix7/haiku
+#              and GCC (cached), and the stage 1 cross sysroot of irix7/muse
 #   ports      one job per port: haikuporter cross-builds it
 #   boot       builds the netboot image and boots it in the IRIS emulator up
 #              to the mounted boot volume
@@ -58,7 +58,7 @@ jobs:
     - name: checkout haiku (irix7 fork, mips port)
       uses: actions/checkout@v4
       with:
-        repository: irix7/haiku
+        repository: irix7/muse
         ref: indy-mips
         path: haiku
 
@@ -71,7 +71,7 @@ jobs:
     - name: checkout haikuporter (irix7 fork)
       uses: actions/checkout@v4
       with:
-        repository: irix7/haikuporter
+        repository: irix7/museporter
         ref: indy-mips
         path: toolchain/ports/haikuporter
 
@@ -261,7 +261,7 @@ jobs:
       fail-fast: false
       matrix:
         # The packages of build/jam/repositories/HaikuPortsCross/mips in
-        # irix7/haiku, without the GCC packages of the toolchain job.
+        # irix7/muse, without the GCC packages of the toolchain job.
         port:
           - ca_root_certificates
           - haikuporter
@@ -317,7 +317,7 @@ jobs:
       if: steps.stored.outputs.skip != 'true'
       uses: actions/checkout@v4
       with:
-        repository: irix7/haiku
+        repository: irix7/muse
         ref: indy-mips
         path: haiku
 
@@ -325,7 +325,7 @@ jobs:
       if: steps.stored.outputs.skip != 'true'
       uses: actions/checkout@v4
       with:
-        repository: irix7/haikuporter
+        repository: irix7/museporter
         ref: indy-mips
         path: toolchain/ports/haikuporter
 
@@ -405,7 +405,7 @@ jobs:
             || gh release upload "$RELEASE" "$PACKAGES/$package"
         done
 
-    # errors.txt is what indy/ci-failures.sh of irix7/haiku prints.
+    # errors.txt is what indy/ci-failures.sh of irix7/muse prints.
     - name: write errors.txt
       if: failure()
       run: |
@@ -432,7 +432,7 @@ jobs:
     - name: checkout haiku (irix7 fork, mips port)
       uses: actions/checkout@v4
       with:
-        repository: irix7/haiku
+        repository: irix7/muse
         ref: indy-mips
         path: haiku
 
