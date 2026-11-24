@@ -203,10 +203,8 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
       run: |
-        gh release view "$RELEASE" >/dev/null 2>&1 \
-          || gh release create "$RELEASE" --prerelease \
-            --target "$GITHUB_SHA" --title "mips bootstrap packages" \
-            --notes "Packages of the bootstrap workflow for the mips port of Haiku (SGI Indy)."
+        # The release exists: the workflow token got HTTP 403 when it tried
+        # to create it, so it was created by hand.
         gh release upload "$RELEASE" --clobber \
           toolchain/build/syslibs/*.hpkg \
           toolchain/bootstrap/objects/haiku/mips/packaging/packages/haiku_cross_devel_sysroot_stage1_mips.hpkg
