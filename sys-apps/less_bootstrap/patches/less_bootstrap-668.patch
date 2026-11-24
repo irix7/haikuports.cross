@@ -258,3 +258,18 @@ index 014179a..7b745e1 100644
  #include "lglob.h"
  #if MSDOS_COMPILER
  #include <dos.h>
+diff --git a/lesskey.c b/lesskey.c
+index 502cdc9..72d3321 100644
+--- a/lesskey.c
++++ b/lesskey.c
+@@ -85,6 +85,10 @@
+ #include <string.h>
+ #include <stdlib.h>
+ #include "lesskey.h"
++#ifdef __HAIKU__
++#include <FindDirectory.h>
++#include <fs_info.h>
++#endif
+ #include "cmd.h"
+ 
+ #ifdef __HAIKU__
