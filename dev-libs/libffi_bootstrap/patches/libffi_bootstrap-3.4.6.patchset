@@ -1,15 +1,21 @@
-From f660badacf771048615b12c7c8e6626a3fcd56a2 Mon Sep 17 00:00:00 2001
+From e12e38363942783cda0a1c57346347c5a35665af Mon Sep 17 00:00:00 2001
 From: belikh <io@belic.net>
 Date: Tue, 24 Nov 2026 10:06:23 +1000
 Subject: [PATCH] Add mips-*-haiku
 
 Haiku on mips is n32 with a 64-bit long double, so it shares the
-stanza of IRIX. It has no sgidefs.h: the compiler defines _MIPS_SIM and
-the _ABI macros.
+stanza of IRIX and rtems, which does not set HAVE_LONG_DOUBLE. It has no
+sgidefs.h: the compiler defines _MIPS_SIM and the _ABI macros.
+
+With long double equal to double, FFI_TYPE_LONGDOUBLE is
+FFI_TYPE_DOUBLE, and the mips code has both as case labels. Give the
+128-bit paths a type code that no type has.
 ---
  configure.host       | 2 +-
+ src/mips/ffi.c       | 9 +++++++++
  src/mips/ffitarget.h | 2 +-
- 2 files changed, 2 insertions(+), 2 deletions(-)
+ src/mips/n32.S       | 9 +++++++++
+ 4 files changed, 20 insertions(+), 2 deletions(-)
 
 diff --git a/configure.host b/configure.host
 index 4cc69be..2f43224 100644
@@ -24,6 +30,26 @@ index 4cc69be..2f43224 100644
  	TARGET=MIPS; TARGETDIR=mips
  	;;
    mips*-*linux* | mips*-*-openbsd* | mips*-*-freebsd*)
+diff --git a/src/mips/ffi.c b/src/mips/ffi.c
+index 5c8c6bc..fca7504 100644
+--- a/src/mips/ffi.c
++++ b/src/mips/ffi.c
+@@ -29,6 +29,15 @@
+ #include <ffi.h>
+ #include <ffi_common.h>
+ 
++/* Where long double is double (Haiku), ffi.h gives both the same type code.
++   The code below handles FFI_TYPE_LONGDOUBLE as the 128-bit type of the n32
++   and n64 ABIs, in case labels and comparisons. A code no type has keeps
++   those paths out of use and leaves double as it is.  */
++#if FFI_TYPE_LONGDOUBLE == FFI_TYPE_DOUBLE
++# undef FFI_TYPE_LONGDOUBLE
++# define FFI_TYPE_LONGDOUBLE 0xff
++#endif
++
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <stdio.h>
 diff --git a/src/mips/ffitarget.h b/src/mips/ffitarget.h
 index 294c3ba..49d7f91 100644
 --- a/src/mips/ffitarget.h
@@ -37,6 +63,26 @@ index 294c3ba..49d7f91 100644
  # include <sgidefs.h>
  #endif
  
+diff --git a/src/mips/n32.S b/src/mips/n32.S
+index df58e80..e61a0f6 100644
+--- a/src/mips/n32.S
++++ b/src/mips/n32.S
+@@ -28,6 +28,15 @@
+ #include <fficonfig.h>
+ #include <ffi.h>
+ 
++/* Where long double is double (Haiku), ffi.h gives both the same type code.
++   The code below handles FFI_TYPE_LONGDOUBLE as the 128-bit type of the n32
++   and n64 ABIs, in case labels and comparisons. A code no type has keeps
++   those paths out of use and leaves double as it is.  */
++#if FFI_TYPE_LONGDOUBLE == FFI_TYPE_DOUBLE
++# undef FFI_TYPE_LONGDOUBLE
++# define FFI_TYPE_LONGDOUBLE 0xff
++#endif
++
+ /* Only build this code if we are compiling for n32 */	
+ 
+ #if defined(FFI_MIPS_N32)
 -- 
 2.56.0
 

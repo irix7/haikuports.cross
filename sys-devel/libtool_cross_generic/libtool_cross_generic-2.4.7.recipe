@@ -46,10 +46,10 @@ BUILD_PREREQUIRES="
 
 BUILD()
 {
-	export MAKEINFO=$(command -v true)
-	export HELP2MAN=$(command -v true)
-	export PATCH=$(command -v true)
-	export XZ=$(command -v true)
+	export MAKEINFO=$(type -P true)
+	export HELP2MAN=$(type -P true)
+	export PATCH=$(type -P true)
+	export XZ=$(type -P true)
 	touch README-release
 
 	cp m4/libtool.m4 m4/libtool.m4.bak
