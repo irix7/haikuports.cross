@@ -131,7 +131,7 @@ jobs:
 
     - name: Cache toolchain (${{ steps.cache-key.outputs.key }})
       id: cache-toolchain
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: |
           toolchain/cross-tools-mips
@@ -163,7 +163,7 @@ jobs:
 
     - name: save the toolchain in cache (${{ steps.cache-key.outputs.key }})
       if: steps.cache-toolchain.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: |
           toolchain/cross-tools-mips
@@ -355,7 +355,7 @@ jobs:
 
     - name: restore the toolchain
       if: steps.stored.outputs.skip != 'true'
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: |
           toolchain/cross-tools-mips
@@ -471,7 +471,7 @@ jobs:
         sudo ./jam0 install
 
     - name: restore the toolchain
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: |
           toolchain/cross-tools-mips
@@ -651,6 +651,7 @@ jobs:
     env:
       PACKAGES: toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages
       HAIKUPORTER_ALL_ARCHITECTURES: 1
+      HAIKUPORTER_PACKAGES_LINK: 1
       PORTER_ARGS: --debug
       TREE_PATH: ${{ github.workspace }}/toolchain/ports/haikuports
       CONFIG_SITE: ${{ github.workspace }}/haiku/indy/toolchain/config.site
@@ -692,7 +693,7 @@ jobs:
         sudo apt-get install -y $HOST_PACKAGES
 
     - name: restore the toolchain
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: |
           toolchain/cross-tools-mips
