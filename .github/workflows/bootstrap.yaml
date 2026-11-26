@@ -53,7 +53,7 @@ env:
   ISL_PREFIX: /usr
   RELEASE: mips-packages
   HOST_PACKAGES: >-
-    nasm autopoint bison flex texinfo gawk gperf m4 autoconf automake libtool
+    nasm autopoint bison flex texinfo gawk gperf m4 autoconf automake libtool libtool-bin
     cmake zip unzip mtools xorriso libgmp-dev libmpfr-dev libmpc-dev
     libisl-dev zlib1g-dev libzstd-dev aspell
 
