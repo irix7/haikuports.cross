@@ -68,45 +68,45 @@ jobs:
 
     steps:
     - name: checkout haiku (irix7 fork, mips port)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/muse
         ref: indy-mips
         path: haiku
 
     - name: checkout buildtools (for jam)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: haiku/buildtools
         path: buildtools
 
     - name: checkout haikuporter (irix7 fork)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/museporter
         ref: indy-mips
         path: toolchain/ports/haikuporter
 
     - name: checkout haikuports
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: haikuports/haikuports
         path: toolchain/ports/haikuports
 
     - name: checkout haikuports.cross
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         path: toolchain/ports/haikuports.cross
 
     - name: checkout binutils (irix7 fork)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/binutils-gdb
         ref: haiku-mips
         path: toolchain/src/binutils
 
     - name: checkout gcc (irix7 fork)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/gcc
         ref: haiku-mips
@@ -203,7 +203,7 @@ jobs:
           $repository/haikuports.conf $repository/packages
 
     - name: upload the bootstrap build
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: bootstrap-base
         path: bootstrap-base.tar.gz
@@ -249,7 +249,7 @@ jobs:
 
     - name: upload the logs
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: toolchain-logs
         if-no-files-found: ignore
@@ -260,7 +260,7 @@ jobs:
           haiku/generated.mips/jam.log
 
   ports:
-    needs: toolchain
+    needs: [toolchain, discover]
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     permissions:
@@ -302,21 +302,27 @@ jobs:
 
     steps:
     - name: checkout haikuports.cross
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         path: toolchain/ports/haikuports.cross
 
     # The package name holds the version of the newest recipe and its
     # REVISION. With that package in the release there is nothing to do.
+    - name: get the list of stored packages
+      uses: actions/download-artifact@v8
+      with:
+        name: stored-list
+        path: stored-list
+
     - name: look for the package of ${{ matrix.port }} in the release
       id: stored
       run: |
+        cp stored-list/assets.txt assets.txt
         port=${{ matrix.port }}
         recipe=$(ls toolchain/ports/haikuports.cross/*/*/"$port"-*.recipe | sort -V | tail -1)
         version=${recipe##*/"$port"-}
         version=${version%.recipe}
         revision=$(sed -n 's/^REVISION="\(.*\)"/\1/p' "$recipe")
-        gh release view "$RELEASE" --json assets -q '.assets[].name' > assets.txt 2>/dev/null || true
         skip=false
         if [ "${{ inputs.rebuild }}" != "true" ] \
             && grep -q "^$port-$version-$revision-\(mips\|any\)\.hpkg$" assets.txt; then
@@ -327,7 +333,7 @@ jobs:
 
     - name: checkout haiku (irix7 fork, mips port)
       if: steps.stored.outputs.skip != 'true'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/muse
         ref: indy-mips
@@ -335,7 +341,7 @@ jobs:
 
     - name: checkout haikuporter (irix7 fork)
       if: steps.stored.outputs.skip != 'true'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/museporter
         ref: indy-mips
@@ -361,7 +367,7 @@ jobs:
 
     - name: download the bootstrap build
       if: steps.stored.outputs.skip != 'true'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: bootstrap-base
 
@@ -376,8 +382,7 @@ jobs:
       if: steps.stored.outputs.skip != 'true'
       run: |
         mkdir -p "$PACKAGES"
-        gh release download "$RELEASE" --pattern '*.hpkg' --dir stored || true
-        rm -f stored/haiku_cross_devel_sysroot_*.hpkg stored/gcc_*.hpkg
+        cp -r stored-list/stored stored
         if [ "${{ inputs.rebuild }}" = "true" ]; then
           rm -f stored/${{ matrix.port }}-*.hpkg
         fi
@@ -427,7 +432,7 @@ jobs:
 
     - name: upload the log
       if: always() && steps.stored.outputs.skip != 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: port-${{ matrix.port }}
         if-no-files-found: ignore
@@ -442,14 +447,14 @@ jobs:
 
     steps:
     - name: checkout haiku (irix7 fork, mips port)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/muse
         ref: indy-mips
         path: haiku
 
     - name: checkout buildtools (for jam)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: haiku/buildtools
         path: buildtools
@@ -539,7 +544,7 @@ jobs:
 
     - name: upload the logs
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: boot
         if-no-files-found: ignore
@@ -562,7 +567,7 @@ jobs:
 
     steps:
     - name: checkout haikuports
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: haikuports/haikuports
         path: haikuports
@@ -610,6 +615,32 @@ jobs:
         done
         echo "shards=$(jq -c . shards.json)" >> "$GITHUB_OUTPUT"
 
+    # The token of a workflow may make about 1000 API requests an hour. The
+    # jobs that follow read these two files and make no request to the
+    # releases: the names of the stored packages, and the bootstrap packages.
+    - name: list the stored packages
+      run: |
+        : > assets.txt
+        for release in $(gh release list --limit 100 --json tagName -q '.[].tagName' | grep '^mips-ports-\|^mips-packages$'); do
+          gh release view "$release" --json assets -q '.assets[].name' >> assets.txt
+        done
+        wc -l assets.txt
+
+    - name: download the bootstrap packages
+      run: |
+        mkdir -p stored
+        gh release download "$RELEASE" --pattern '*.hpkg' --dir stored || true
+        rm -f stored/haiku_cross_devel_sysroot_*.hpkg stored/gcc_*.hpkg
+        ls stored | wc -l
+
+    - name: keep both for the jobs
+      uses: actions/upload-artifact@v7
+      with:
+        name: stored-list
+        path: |
+          assets.txt
+          stored
+
   all-ports:
     needs: [toolchain, discover, ports]
     if: ${{ !cancelled() && needs.toolchain.result == 'success' && needs.discover.result == 'success' }}
@@ -618,8 +649,6 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
       PACKAGES: toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages
       HAIKUPORTER_ALL_ARCHITECTURES: 1
       TREE_PATH: ${{ github.workspace }}/toolchain/ports/haikuports
@@ -632,25 +661,25 @@ jobs:
 
     steps:
     - name: checkout haikuports.cross
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         path: toolchain/ports/haikuports.cross
 
     - name: checkout haikuports
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: haikuports/haikuports
         path: toolchain/ports/haikuports
 
     - name: checkout haiku (irix7 fork, mips port)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/muse
         ref: indy-mips
         path: haiku
 
     - name: checkout haikuporter (irix7 fork)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: irix7/museporter
         ref: indy-mips
@@ -673,7 +702,7 @@ jobs:
         fail-on-cache-miss: true
 
     - name: download the bootstrap build
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: bootstrap-base
 
@@ -682,15 +711,17 @@ jobs:
         mkdir -p toolchain/bootstrap
         tar -C toolchain/bootstrap -xzf bootstrap-base.tar.gz
 
-    # The bootstrap packages and the packages of this shard that an earlier
-    # run built serve as dependencies.
-    - name: download the stored packages
+    # The bootstrap packages serve as dependencies.
+    - name: get the stored packages
+      uses: actions/download-artifact@v8
+      with:
+        name: stored-list
+        path: stored-list
+
+    - name: put the stored packages in place
       run: |
-        mkdir -p "$PACKAGES" stored
-        gh release download "$RELEASE" --pattern '*.hpkg' --dir stored || true
-        gh release download "${{ matrix.shard.release }}" --pattern '*.hpkg' --dir stored || true
-        rm -f stored/haiku_cross_devel_sysroot_*.hpkg stored/gcc_*.hpkg
-        cp -n stored/*.hpkg "$PACKAGES/" 2>/dev/null || true
+        mkdir -p "$PACKAGES" out
+        cp -n stored-list/stored/*.hpkg "$PACKAGES/" 2>/dev/null || true
         ls "$PACKAGES" | sort > before.txt
 
     # The ports of the shard, one after the other. A port with a stored
@@ -701,12 +732,7 @@ jobs:
       run: |
         mkdir -p logs
         : > results.txt
-        gh release list --limit 100 --json tagName -q '.[].tagName' \
-          | grep '^mips-ports-\|^mips-packages$' > releases.txt || true
-        : > assets.txt
-        while read -r release; do
-          gh release view "$release" --json assets -q '.assets[].name' >> assets.txt || true
-        done < releases.txt
+        cp stored-list/assets.txt assets.txt
         deadline=$(( $(date +%s) + 19200 ))
         for port in ${{ matrix.shard.ports }}; do
           if [ "$(date +%s)" -gt "$deadline" ]; then
@@ -738,31 +764,93 @@ jobs:
             { echo "== $port"; haiku/indy/toolchain/port-errors.sh "logs/$port.log" 6; } >> errors.txt || true
           fi
           ls "$PACKAGES" | sort > after-port.txt
+          # The new packages leave with the artifact of the shard. They are
+          # published to the release by the job publish.
           for package in $(comm -13 before-port.txt after-port.txt | grep -v -- '-source\.hpkg$'); do
             echo "$package" >> assets.txt
-            gh release upload "${{ matrix.shard.release }}" "$PACKAGES/$package" \
-              || { sleep 20; gh release view "${{ matrix.shard.release }}" --json assets -q '.assets[].name' | grep -qx "$package"; } \
-              || gh release upload "${{ matrix.shard.release }}" "$PACKAGES/$package" \
-              || true
+            cp "$PACKAGES/$package" out/
           done
           # A log of a port that built is not kept.
           [ "$(tail -1 results.txt | cut -d' ' -f2)" = failed ] || rm -f "logs/$port.log"
         done
+        echo "${{ matrix.shard.release }}" > release.txt
         cat results.txt
         {
-          echo "shard ${{ matrix.shard.id }}: $(grep -c ' built' results.txt) built, $(grep -c ' stored' results.txt) stored, $(grep -c ' failed' results.txt) failed, $(grep -c ' out-of-time' results.txt) not started"
+          echo "shard ${{ matrix.shard.id }} (${{ matrix.shard.release }}): $(grep -c ' built' results.txt) built, $(grep -c ' stored' results.txt) stored, $(grep -c ' failed' results.txt) failed, $(grep -c ' out-of-time' results.txt) not started"
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: upload the results and the logs of failed ports
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        name: shard-${{ matrix.shard.id }}
+        name: result-${{ matrix.shard.id }}
         if-no-files-found: ignore
         path: |
           results.txt
           errors.txt
           logs
+
+    - name: upload the new packages
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: packages-${{ matrix.shard.id }}
+        if-no-files-found: ignore
+        path: |
+          out
+          release.txt
+
+  # Uploads the new packages to the releases. The token allows about 1000
+  # requests an hour; at the limit the job waits for the reset. A package
+  # that is not uploaded when the job ends is built again by the next run.
+  publish:
+    needs: all-ports
+    if: ${{ !cancelled() && needs.all-ports.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+    - name: download the packages of the shards
+      uses: actions/download-artifact@v8
+      with:
+        pattern: packages-*
+        path: shards
+
+    - name: upload the packages to the releases
+      run: |
+        deadline=$(( $(date +%s) + 20400 ))
+        done_count=0
+        for dir in shards/packages-*; do
+          [ -d "$dir/out" ] || continue
+          release=$(cat "$dir/release.txt")
+          for file in "$dir"/out/*.hpkg; do
+            [ -e "$file" ] || continue
+            while true; do
+              if [ "$(date +%s)" -gt "$deadline" ]; then
+                echo "out of time after $done_count packages"
+                exit 0
+              fi
+              if gh release upload "$release" "$file" 2> upload.err; then
+                done_count=$((done_count + 1))
+                break
+              fi
+              cat upload.err
+              if grep -q 'already exists' upload.err; then break; fi
+              # At the limit: wait for the reset.
+              reset=$(gh api rate_limit --jq .resources.core.reset 2>/dev/null || echo 0)
+              wait=$(( reset - $(date +%s) + 5 ))
+              [ "$wait" -lt 30 ] && wait=30
+              [ "$wait" -gt 3700 ] && wait=3700
+              echo "waiting $wait s"
+              sleep "$wait"
+            done
+          done
+        done
+        echo "published $done_count packages" | tee -a "$GITHUB_STEP_SUMMARY"
 
   report:
     needs: all-ports
@@ -771,9 +859,9 @@ jobs:
     timeout-minutes: 15
     steps:
     - name: download the results
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
-        pattern: shard-*
+        pattern: result-*
         path: shards
 
     - name: count the ports
@@ -786,5 +874,5 @@ jobs:
             echo "| $state | $(grep -c " $state\$" all.txt) |"
           done
           echo
-          echo "Ports that failed: see the artifacts shard-NNN (errors.txt, logs/)."
+          echo "Ports that failed: see the artifacts result-NNN (errors.txt, logs/)."
         } | tee -a "$GITHUB_STEP_SUMMARY"
