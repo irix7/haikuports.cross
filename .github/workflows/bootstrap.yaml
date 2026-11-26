@@ -594,15 +594,30 @@ jobs:
                     if m:
                         ports.append(m.group(1))
         ports = sorted(set(ports))
+        # The libraries and tools that most other ports build-require come
+        # first, in shard 000. Their packages are stored, so the next runs
+        # start with them. A name that is not a port is skipped.
+        main = '''
+            zlib bzip2 xz_utils zstd lz4 expat libffi libiconv gettext
+            gmp readline ncurses6 sqlite openssl openssl3 libpng16 freetype
+            libjpeg_turbo tiff giflib libxml2 libxslt pcre2 glib2 gperf
+            ninja meson file groff autoconf_archive docbook_xml_dtd
+            docbook_xsl_stylesheets python3.14 setuptools wheel flit_core
+            installer tomli packaging pyproject_hooks build typing_extensions
+            pygments graphite2 jasper netpbm libglvnd glu itstool
+        '''.split()
+        first = [p for p in main if p in set(ports)]
+        ports = first + [p for p in ports if p not in set(first)]
         # At most 256 jobs. At most ten shards in a release.
         size = max(15, -(-len(ports) // 250))
         shards = []
-        for i in range(0, len(ports), size):
-            n = len(shards)
+        starts = [0] + list(range(len(first) if first else size, len(ports), size))
+        for n, i in enumerate(starts):
+            j = starts[n + 1] if n + 1 < len(starts) else len(ports)
             shards.append({
                 'id': '%03d' % n,
                 'release': 'mips-ports-%02d' % (n // 10),
-                'ports': ' '.join(ports[i:i + size]),
+                'ports': ' '.join(ports[i:j]),
             })
         print(json.dumps(shards))
         PY
