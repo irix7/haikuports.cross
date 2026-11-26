@@ -741,6 +741,25 @@ jobs:
         cp -n stored-list/stored/*.hpkg "$PACKAGES/" 2>/dev/null || true
         ls "$PACKAGES" | sort > before.txt
 
+    # Shard 000 builds the main libraries and tools. Runners are limited, so
+    # the later shards wait for one and start after it, usually when shard
+    # 000 has finished. They take its packages as dependencies. When shard
+    # 000 has not finished, there is no artifact and they build them
+    # themselves.
+    - name: get the packages of shard 000
+      if: ${{ matrix.shard.id != '000' }}
+      continue-on-error: true
+      uses: actions/download-artifact@v8
+      with:
+        name: packages-000
+        path: packages-000
+
+    - name: put the packages of shard 000 in place
+      if: ${{ matrix.shard.id != '000' }}
+      run: |
+        cp -n packages-000/out/*.hpkg "$PACKAGES/" 2>/dev/null || true
+        ls "$PACKAGES" | sort > before.txt
+
     # The ports of the shard, one after the other. A port with a stored
     # package is skipped. A new package is stored at once, so a job that
     # runs out of time loses only the port it was building. The next run
