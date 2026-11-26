@@ -651,6 +651,7 @@ jobs:
     env:
       PACKAGES: toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages
       HAIKUPORTER_ALL_ARCHITECTURES: 1
+      PORTER_ARGS: --debug
       TREE_PATH: ${{ github.workspace }}/toolchain/ports/haikuports
       CONFIG_SITE: ${{ github.workspace }}/haiku/indy/toolchain/config.site
     strategy:
