@@ -572,52 +572,115 @@ jobs:
         repository: haikuports/haikuports
         path: haikuports
 
+    - name: checkout haikuporter (irix7 fork), for the host tools it provides
+      uses: actions/checkout@v7
+      with:
+        repository: irix7/museporter
+        ref: indy-mips
+        path: haikuporter
+
     - name: list the ports and create the releases
       id: list
       run: |
         python3 - <<'PY' > shards.json
-        import json, os, re
+        # The ports in the order of their dependencies: a port comes after
+        # the ports that provide what it requires. Ports with the same depth
+        # are ordered by the number of ports that depend on them, so the
+        # libraries that most ports need come first, in shard 000. Names that
+        # the host provides (cmd:make, ...) are not dependencies here.
+        import os, re, sys, json, collections
         tree = 'haikuports'
-        ports = []
+        recipes = {}   # port name -> newest recipe path
         for category in sorted(os.listdir(tree)):
             path = os.path.join(tree, category)
             if '-' not in category or not os.path.isdir(path):
                 continue
-            for port in sorted(os.listdir(path)):
-                directory = os.path.join(path, port)
+            for d in sorted(os.listdir(path)):
+                directory = os.path.join(path, d)
                 if not os.path.isdir(directory):
                     continue
-                # The name of a port is that of its recipe files, which can
-                # differ from the name of the directory: name-version.recipe.
-                for f in os.listdir(directory):
+                for f in sorted(os.listdir(directory)):
                     m = re.fullmatch(r'(.+)-([^-]+)\.recipe', f)
                     if m:
-                        ports.append(m.group(1))
-        ports = sorted(set(ports))
-        # The libraries and tools that most other ports build-require come
-        # first, in shard 000. Their packages are stored, so the next runs
-        # start with them. A name that is not a port is skipped.
-        main = '''
-            zlib bzip2 xz_utils zstd lz4 expat libffi libiconv gettext
-            gmp readline ncurses6 sqlite openssl openssl3 libpng16 freetype
-            libjpeg_turbo tiff giflib libxml2 libxslt pcre2 glib2 gperf
-            ninja meson file groff autoconf_archive docbook_xml_dtd
-            docbook_xsl_stylesheets python3.14 setuptools wheel flit_core
-            installer tomli packaging pyproject_hooks build typing_extensions
-            pygments graphite2 jasper netpbm libglvnd glu itstool
-        '''.split()
-        first = [p for p in main if p in set(ports)]
-        ports = first + [p for p in ports if p not in set(first)]
+                        recipes[m.group(1)] = os.path.join(directory, f)
+        ports = sorted(recipes)
+        VAR = re.compile(r'^(PROVIDES|REQUIRES|BUILD_REQUIRES|BUILD_PREREQUIRES)(_[A-Za-z0-9_]+)?="([^"]*)"', re.M | re.S)
+        def names(block):
+            out = []
+            for line in block.split('\n'):
+                line = line.split('#')[0].strip()
+                if not line:
+                    continue
+                tok = line.split()[0]
+                tok = re.sub(r'\$\{?secondaryArchSuffix\}?', '', tok)
+                tok = re.sub(r'\$\{?[A-Za-z_]+\}?', '', tok)
+                if tok and tok not in ('if', 'fi', 'then', 'else'):
+                    out.append(tok)
+            return out
+        provides = {}   # name -> port
+        need = {}       # port -> set of names
+        for port, path in recipes.items():
+            text = open(path, errors='replace').read()
+            need[port] = set()
+            provides.setdefault(port, port)
+            for m in VAR.finditer(text):
+                kind, ex, body = m.group(1), m.group(2), m.group(3)
+                for n in names(body):
+                    if kind == 'PROVIDES':
+                        provides.setdefault(n, port)
+                    else:
+                        need[port].add(n)
+        import re as _re
+        hostsrc = open(os.path.join('haikuporter', 'HaikuPorter/BuildPlatform.py')).read()
+        a = hostsrc.index('self.implicitBuildHostProvides = set([')
+        b = hostsrc.index('])', a)
+        host = set(_re.findall(r"'((?:cmd:)?[A-Za-z0-9_+.:-]+)'", hostsrc[a:b])) | {'haiku', 'haiku_devel'}
+        deps = {p: set() for p in ports}
+        for p in ports:
+            for n in need[p]:
+                if n in host: continue
+                q = provides.get(n)
+                if q and q != p:
+                    deps[p].add(q)
+        # levels: longest chain of dependencies, cycles cut where they close
+        level = {}
+        state = {}
+        sys.setrecursionlimit(100000)
+        def lvl(p):
+            if p in level: return level[p]
+            if state.get(p) == 1: return -1
+            state[p] = 1
+            best = 0
+            for q in sorted(deps[p]):
+                l = lvl(q)
+                if l >= 0: best = max(best, l + 1)
+            state[p] = 2
+            level[p] = best
+            return best
+        for p in ports: lvl(p)
+        # dependents (transitive count approximated by direct + indirect via levels)
+        users = collections.Counter()
+        rev = collections.defaultdict(set)
+        for p in ports:
+            for q in deps[p]: rev[q].add(p)
+        def trans(p):
+            seen, stack = set(), [p]
+            while stack:
+                x = stack.pop()
+                for y in rev[x]:
+                    if y not in seen: seen.add(y); stack.append(y)
+            return len(seen)
+        for p in ports: users[p] = trans(p)
+        order = sorted(ports, key=lambda p: (level[p], -users[p], p))
+        ports = order
         # At most 256 jobs. At most ten shards in a release.
         size = max(15, -(-len(ports) // 250))
         shards = []
-        starts = [0] + list(range(len(first) if first else size, len(ports), size))
-        for n, i in enumerate(starts):
-            j = starts[n + 1] if n + 1 < len(starts) else len(ports)
+        for n, i in enumerate(range(0, len(ports), size)):
             shards.append({
                 'id': '%03d' % n,
                 'release': 'mips-ports-%02d' % (n // 10),
-                'ports': ' '.join(ports[i:j]),
+                'ports': ' '.join(ports[i:i + size]),
             })
         print(json.dumps(shards))
         PY
@@ -741,7 +804,7 @@ jobs:
         cp -n stored-list/stored/*.hpkg "$PACKAGES/" 2>/dev/null || true
         ls "$PACKAGES" | sort > before.txt
 
-    # Shard 000 builds the main libraries and tools. Runners are limited, so
+    # Shard 000 holds the ports that most others depend on. Runners are limited, so
     # the later shards wait for one and start after it, usually when shard
     # 000 has finished. They take its packages as dependencies. When shard
     # 000 has not finished, there is no artifact and they build them
