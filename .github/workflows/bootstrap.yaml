@@ -6,6 +6,18 @@
 #   ports      one job per port: haikuporter cross-builds it
 #   boot       builds the netboot image and boots it in the IRIS emulator up
 #              to the mounted boot volume
+#   discover   lists the ports of the HaikuPorts tree and splits them into
+#              shards of about 20 ports
+#   all-ports  one job per shard: builds the ports of the shard one after
+#              the other, with the recipes of HaikuPorts that do not list
+#              mips (HAIKUPORTER_ALL_ARCHITECTURES, see irix7/museporter).
+#              A port that fails does not stop the shard. Its log is kept.
+#   report     counts the built, stored and failed ports of all shards
+#
+# The packages of the bootstrap ports are stored in the release
+# "mips-packages" of this repository. The packages of the other ports are
+# stored in the releases "mips-ports-NN", ten shards each: a release holds
+# at most 1000 files.
 #
 # The packages are stored in the release "mips-packages" of this repository.
 # Each job uploads what it built as soon as it is built. A ports job whose
@@ -534,3 +546,244 @@ jobs:
         path: |
           errors.txt
           boot-logs
+
+  # The ports of HaikuPorts. The recipes of the tree are the source of the
+  # list, so a new recipe is built by the next run.
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    outputs:
+      shards: ${{ steps.list.outputs.shards }}
+
+    steps:
+    - name: checkout haikuports
+      uses: actions/checkout@v4
+      with:
+        repository: haikuports/haikuports
+        path: haikuports
+
+    - name: list the ports and create the releases
+      id: list
+      run: |
+        python3 - <<'PY' > shards.json
+        import json, os, re
+        tree = 'haikuports'
+        ports = []
+        for category in sorted(os.listdir(tree)):
+            path = os.path.join(tree, category)
+            if '-' not in category or not os.path.isdir(path):
+                continue
+            for port in sorted(os.listdir(path)):
+                directory = os.path.join(path, port)
+                if not os.path.isdir(directory):
+                    continue
+                # The name of a port is that of its recipe files, which can
+                # differ from the name of the directory: name-version.recipe.
+                for f in os.listdir(directory):
+                    m = re.fullmatch(r'(.+)-([^-]+)\.recipe', f)
+                    if m:
+                        ports.append(m.group(1))
+        ports = sorted(set(ports))
+        # At most 256 jobs. At most ten shards in a release.
+        size = max(15, -(-len(ports) // 250))
+        shards = []
+        for i in range(0, len(ports), size):
+            n = len(shards)
+            shards.append({
+                'id': '%03d' % n,
+                'release': 'mips-ports-%02d' % (n // 10),
+                'ports': ' '.join(ports[i:i + size]),
+            })
+        print(json.dumps(shards))
+        PY
+        echo "ports: $(jq '[.[].ports | split(" ") | length] | add' shards.json), shards: $(jq length shards.json)"
+        for release in $(jq -r '.[].release' shards.json | sort -u); do
+          gh release view "$release" >/dev/null 2>&1 \
+            || gh release create "$release" --prerelease \
+              --title "$release" \
+              --notes "Packages of ports of HaikuPorts cross-built for mips by the workflow bootstrap."
+        done
+        echo "shards=$(jq -c . shards.json)" >> "$GITHUB_OUTPUT"
+
+  all-ports:
+    needs: [toolchain, discover, ports]
+    if: ${{ !cancelled() && needs.toolchain.result == 'success' && needs.discover.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PACKAGES: toolchain/bootstrap/objects/haiku/mips/packaging/repositories/HaikuPortsCross-build/packages
+      HAIKUPORTER_ALL_ARCHITECTURES: 1
+      TREE_PATH: ${{ github.workspace }}/toolchain/ports/haikuports
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.discover.outputs.shards) }}
+
+    steps:
+    - name: checkout haikuports.cross
+      uses: actions/checkout@v4
+      with:
+        path: toolchain/ports/haikuports.cross
+
+    - name: checkout haikuports
+      uses: actions/checkout@v4
+      with:
+        repository: haikuports/haikuports
+        path: toolchain/ports/haikuports
+
+    - name: checkout haiku (irix7 fork, mips port)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/muse
+        ref: indy-mips
+        path: haiku
+
+    - name: checkout haikuporter (irix7 fork)
+      uses: actions/checkout@v4
+      with:
+        repository: irix7/museporter
+        ref: indy-mips
+        path: toolchain/ports/haikuporter
+
+    - name: install ubuntu packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $HOST_PACKAGES
+
+    - name: restore the toolchain
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          toolchain/cross-tools-mips
+          toolchain/seed
+          toolchain/build/kernel-libs
+          toolchain/build/syslibs/*.hpkg
+        key: ${{ needs.toolchain.outputs.cache-key }}
+        fail-on-cache-miss: true
+
+    - name: download the bootstrap build
+      uses: actions/download-artifact@v4
+      with:
+        name: bootstrap-base
+
+    - name: unpack the bootstrap build
+      run: |
+        mkdir -p toolchain/bootstrap
+        tar -C toolchain/bootstrap -xzf bootstrap-base.tar.gz
+
+    # The bootstrap packages and the packages of this shard that an earlier
+    # run built serve as dependencies.
+    - name: download the stored packages
+      run: |
+        mkdir -p "$PACKAGES" stored
+        gh release download "$RELEASE" --pattern '*.hpkg' --dir stored || true
+        gh release download "${{ matrix.shard.release }}" --pattern '*.hpkg' --dir stored || true
+        rm -f stored/haiku_cross_devel_sysroot_*.hpkg stored/gcc_*.hpkg
+        cp -n stored/*.hpkg "$PACKAGES/" 2>/dev/null || true
+        ls "$PACKAGES" | sort > before.txt
+
+    # The ports of the shard, one after the other. A port with a stored
+    # package is skipped. A new package is stored at once, so a job that
+    # runs out of time loses only the port it was building. The next run
+    # continues with the ports that have no package.
+    - name: build the ports of shard ${{ matrix.shard.id }}
+      run: |
+        mkdir -p logs
+        : > results.txt
+        gh release list --limit 100 --json tagName -q '.[].tagName' \
+          | grep '^mips-ports-\|^mips-packages$' > releases.txt || true
+        : > assets.txt
+        while read -r release; do
+          gh release view "$release" --json assets -q '.assets[].name' >> assets.txt || true
+        done < releases.txt
+        deadline=$(( $(date +%s) + 19200 ))
+        for port in ${{ matrix.shard.ports }}; do
+          if [ "$(date +%s)" -gt "$deadline" ]; then
+            echo "$port out-of-time" >> results.txt
+            continue
+          fi
+          recipe=
+          for candidate in $(find toolchain/ports/haikuports -name "$port-*.recipe" | sort -V); do
+            rest=${candidate##*/"$port"-}
+            case "${rest%.recipe}" in *-*) ;; *) recipe=$candidate ;; esac
+          done
+          if [ -z "$recipe" ]; then
+            echo "$port failed" >> results.txt
+            echo "== $port: no recipe of that name in its directory" >> errors.txt
+            continue
+          fi
+          version=${recipe##*/"$port"-}
+          version=${version%.recipe}
+          revision=$(sed -n 's/^REVISION="\(.*\)"/\1/p' "$recipe")
+          if grep -q "^$port-$version-$revision-\(mips\|any\)\.hpkg$" assets.txt; then
+            echo "$port stored" >> results.txt
+            continue
+          fi
+          ls "$PACKAGES" | sort > before-port.txt
+          if timeout 5400 haiku/indy/toolchain/port.sh "$port" > "logs/$port.log" 2>&1; then
+            echo "$port built" >> results.txt
+          else
+            echo "$port failed" >> results.txt
+            { echo "== $port"; haiku/indy/toolchain/port-errors.sh "logs/$port.log" 6; } >> errors.txt || true
+          fi
+          ls "$PACKAGES" | sort > after-port.txt
+          for package in $(comm -13 before-port.txt after-port.txt | grep -v -- '-source\.hpkg$'); do
+            echo "$package" >> assets.txt
+            gh release upload "${{ matrix.shard.release }}" "$PACKAGES/$package" \
+              || { sleep 20; gh release view "${{ matrix.shard.release }}" --json assets -q '.assets[].name' | grep -qx "$package"; } \
+              || gh release upload "${{ matrix.shard.release }}" "$PACKAGES/$package" \
+              || true
+          done
+          # A log of a port that built is not kept.
+          [ "$(tail -1 results.txt | cut -d' ' -f2)" = failed ] || rm -f "logs/$port.log"
+        done
+        cat results.txt
+        {
+          echo "shard ${{ matrix.shard.id }}: $(grep -c ' built' results.txt) built, $(grep -c ' stored' results.txt) stored, $(grep -c ' failed' results.txt) failed, $(grep -c ' out-of-time' results.txt) not started"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: upload the results and the logs of failed ports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: shard-${{ matrix.shard.id }}
+        if-no-files-found: ignore
+        path: |
+          results.txt
+          errors.txt
+          logs
+
+  report:
+    needs: all-ports
+    if: ${{ !cancelled() && needs.all-ports.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - name: download the results
+      uses: actions/download-artifact@v4
+      with:
+        pattern: shard-*
+        path: shards
+
+    - name: count the ports
+      run: |
+        cat shards/*/results.txt > all.txt 2>/dev/null || true
+        {
+          echo "| state | ports |"
+          echo "|---|---|"
+          for state in built stored failed out-of-time; do
+            echo "| $state | $(grep -c " $state\$" all.txt) |"
+          done
+          echo
+          echo "Ports that failed: see the artifacts shard-NNN (errors.txt, logs/)."
+        } | tee -a "$GITHUB_STEP_SUMMARY"
