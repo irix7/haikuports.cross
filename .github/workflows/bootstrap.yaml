@@ -509,6 +509,9 @@ jobs:
         WORK: ${{ runner.temp }}/gate
         DISK: haiku/generated.mips/disk.raw
         BOOT_ARGS: disk
+        # 256 MB, two banks: the most the kernel uses (RAM contiguous from
+        # 0x08000000). The runner has 16 GB.
+        RAM: 256
       run: |
         haiku/indy/gate.sh haiku/generated.mips/haiku-indy-netboot \
           "Mounted boot partition" 300
