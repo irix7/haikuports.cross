@@ -675,7 +675,11 @@ jobs:
             return len(seen)
         for p in ports: users[p] = trans(p)
         order = sorted(ports, key=lambda p: (level[p], -users[p], p))
-        ports = order
+        # The tools that the image of the native build needs go into the
+        # first shard, in the order of their dependencies.
+        first = [p for p in ('libiconv', 'gettext', 'unzip', 'xz_utils', 'ninja')
+                 if p in order]
+        ports = first + [p for p in order if p not in first]
         # At most 256 jobs. At most ten shards in a release.
         size = max(15, -(-len(ports) // 250))
         shards = []
